@@ -9,13 +9,19 @@ from os import makedirs
 from hashlib import md5
 
 app = Flask(__name__)
-app.debug = False
+app.debug = True
 ROOT=None
 
-@app.route('/store', methods=[ 'POST', 'PUT' ])
+@app.route('/store', methods=[ 'PUT' ])
 def store():
-    uri = request.args.get('uri') if 'uri' in request.args else uuid4().urn
-    archive(request.stream, get_path(uri))
+    if 'uri' in request.args and 'path' in request.args:
+        abort(412)
+
+    uri = request.args.get('uri', uuid4().urn)
+    path = request.args.get('path', get_path(uri))
+    hash = request.args.get('hash', None)
+
+    archive(path, request.stream, expected_hash=hash)
 
     return uri
 
@@ -28,8 +34,10 @@ def retrieve():
 
     return send_file(path)
 
-def archive(stream, path):
+def archive(uri, stream, expected_hash=None):
+    path = get_path(uri)
     data = ' '
+    hash = md5()
 
     if not isdir(dirname(path)):
         makedirs(dirname(path))
@@ -37,6 +45,7 @@ def archive(stream, path):
     with open(path, 'w') as f:
         while data != '':
             data = stream.read(1024)
+            hash.update(data)
             f.write(data)
 
 def get_path(uri):
@@ -53,13 +62,17 @@ def get_path(uri):
     
     return '/'.join([ ROOT ] + s)
 
+def _log(message, t=datetime.utcnow()):
+    with open("%s-log" % self.url[7:], 'a') as logfile:
+        logfile.write(t.isoformat() + ' ' + message + '\n')
 
 if __name__ == "__main__":
     parser = ArgumentParser()
     #parser.add_argument('-p', '--path_scheme', default='hash')
+    parser.add_argument('-p', '--port', type=int, default=8080)
     parser.add_argument('archive')
     args = vars(parser.parse_args())
     ROOT = abspath(args['archive'])
 
-    app.run(host='0.0.0.0', port=8080, threaded=True)
+    app.run(host='0.0.0.0', port=args['port'], threaded=True)
 
