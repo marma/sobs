@@ -12,62 +12,49 @@ from hashlib import md5
 from datetime import datetime
 
 app = Flask(__name__)
-#app.debug = True
+app.debug = True
 ROOT=None
 TMP=None
 
 @app.route('/store', methods=[ 'PUT' ])
 def store():
     uri = request.args.get('uri', None)
-    path = request.args.get('path', None)
+    opath = request.args.get('path', None)
     hash = request.args.get('hash', None)
 
-    if uri and path:
-        return Response('Parameters uri and path mutually exclusive', status=412)
-    elif not uri or path:
-        uri = uuid4().urn
+    try:
+        uri, path = get_path(uri, opath)
+        archive(path, request.stream, uri=uri, expected_hash=hash)
+    except Exception as e:
+        print e
+        return Response(e.message[0], status=e.message[1])
 
-    if path:
-        if '..' in path:
-            return Response('\'..\' not allowed in path', 412)
-
-        path = safe_join(ROOT, 'path/' + path)
-    else:
-        path = safe_join(ROOT, 'hash/' + get_path(uri))
-
-    archive(path, request.stream, uri=uri, expected_hash=hash)
-
-    return 'OK'
+    return uri or opath
 
 
 @app.route('/retrieve', methods=[ 'GET' ])
 def retrieve():
     uri = request.args.get('uri', None)
-    path = request.args.get('path', None)
+    opath = request.args.get('path', None)
     hash = request.args.get('hash', None)
 
-    if uri and path:
-        return Response('Parameters uri and path mutually exclusive\n', status=412)
-    
-    if path:
-        if '..' in path:
-            return Response('\'..\' not allowed in path', 412)
-
-        path = safe_join(ROOT, 'path/' + path)
-    else:
-        path = safe_join(ROOT, 'hash/' + get_path(uri))
+    try:
+        path = join(ROOT, get_path(uri, opath)[1])
+    except Exception as e:
+        return Response(e.message[0], status=e.message[1])
 
     if not isfile(path):
-        return Response('No such file\n', status=412)
+        return Response('No such file\n', status=404)
 
     return send_file(path)
 
 
-def archive(path, stream, uri=None, expected_hash=None):
+def archive(opath, stream, uri=None, expected_hash=None):
+    path = join(ROOT, opath)
     data = ' '
     hash = md5()
 
-    # actually DO checksum checking
+    # @TODO actually DO checksum checking
 
     if not isdir(dirname(path)):
         makedirs(dirname(path))
@@ -79,12 +66,31 @@ def archive(path, stream, uri=None, expected_hash=None):
             f.write(data)
 
     if uri:
-        _log('STORED object with uri %s at %s, md5:%s' % (uri, path, hash.hexdigest()))
+        _log('STORED object with uri %s at %s, md5:%s' % (uri, opath, hash.hexdigest()))
     else:
-        _log('STORED object at %s, md5:%s' % (path, hash.hexdigest()))
+        _log('STORED object at %s, md5:%s' % (opath, hash.hexdigest()))
 
 
-def get_path(uri):
+def get_path(uri, path):
+    if uri and path:
+        raise Exception(('Parameters uri and path mutually exclusive', 412))
+    elif not (uri or path):
+        uri = uuid4().urn
+
+    if path:
+        if '..' in path:
+            raise Exception(('\'..\' not allowed in path', 412))
+
+        path = safe_join('path/', path)
+    else:
+        path = safe_join('hash/', hashpath(uri))
+
+    print path
+
+    return uri,path
+
+
+def hashpath(uri):
     hex = md5(uri).hexdigest()
     s = [ hex[ 2*i:2*i+2 ] for i in range(0,4) ] + [ hex ]
     
@@ -102,8 +108,8 @@ if __name__ == "__main__":
     parser.add_argument('-p', '--port', type=int, default=8080)
     parser.add_argument('archive')
     args = vars(parser.parse_args())
-    ROOT = abspath(args['archive'])
-    TMP=abspath(args['temp_directory'])
+    ROOT = unicode(abspath(args['archive']))
+    TMP = unicode(abspath(args['temp_directory']))
 
     app.run(host='0.0.0.0', port=args['port'], threaded=True)
 
